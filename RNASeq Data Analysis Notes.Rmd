@@ -1,0 +1,371 @@
+---
+title: "Learning to Conduct RNASeq Analysis"
+output:
+  html_document:
+    df_print: paged
+  df_print: paged
+  html_notebook: default
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook meant for documenting the learning progress in BCB420. When code is executed within the notebook, the results appear beneath the code. 
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+
+---
+
+## Assignment 1: Data set selection and initial Processing ###
+
+Select an expression dataset of interest. This be the base for all subsequent assignment in the course. Currently, GEO contains expression data collected from a variety of technologies. Make sure to choose gene expression platform like microarrays or RNAseq experiments. In fact, **GEOmetadb does not contain any microarray data.** For access to microarray data from within R/Bioconductor, the GEOquery package is a good source. 
+
+We want expression datasets that are:
+1) with good **coverage**; \
+2) not much older than ten years (**updated quality**); \
+3) with sufficient numbers of **replicates**; \
+4) collected under **interesting conditions**; \
+5) mapped to unique human gene identifiers.
+
+```{r Loading libraries & datasets, echo=FALSE, message=FALSE, results='hide'}
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    invisible(install.packages("BiocManager"))
+
+if (!requireNamespace("GEOmetadb", quietly = TRUE))
+    invisible(BiocManager::install("GEOmetadb"))
+
+if (!requireNamespace("edgeR", quietly = TRUE))
+    invisible(BiocManager::install("edgeR"))
+
+if (!requireNamespace("DESeq2", quietly = TRUE))
+    invisible(BiocManager::install("DESeq2"))
+
+invisible(library(BiocManager))
+invisible(library(knitr))
+invisible(library(GEOmetadb))
+invisible(library(DBI))
+invisible(library(RSQLite))
+invisible(library(ggplot2))
+invisible(library(dplyr))
+invisible(library(edgeR))
+invisible(library(DESeq2))
+invisible(library(biomaRt))
+```
+
+### Part 1: Learning to Conduct SQL Queries
+
+```{r Getting to know SQL tables}
+# Note: the full version of GEOmetadb.sqlite is a massive file of > 10GB, its compressed gz archive is 740MB. The full download + unzipping was taking TOO LONG in R, possibly due to my connection, so I downloaded the compressed file and manually unzipped it locally. 
+# citation("GEOmetadb")
+
+options(timeout = 600)
+if(!file.exists('GEOmetadb.sqlite')) getSQLiteFile(destdir="/home/rstudio/projects/bcb420_code")
+
+# View file info
+file.info('Geometadb.sqlite')
+con <- dbConnect(SQLite(), 'GEOmetadb.sqlite')
+# View list of tables
+geo_tables <- dbListTables(con)
+geo_tables
+# View an individual table (*this one has supplementary_file)
+dbListFields(con, "gse")
+
+# Preliminary SQL queries (*some of these datasets are over 20 years old)
+results <- dbGetQuery(con,'select * from gpl limit 10')
+
+# Over 20,000 experiments types (e.g. RNAseq/Microarray/Protein array)
+num_platforms <- dbGetQuery(con,'select count(*) from gpl')
+# 20 types of gpl associated information
+dbListFields(con,'gpl')
+# 18 unique technologies (where is RNAseq? Terminology mix up)
+uniq_tech <- dbGetQuery(con,'select distinct technology from gpl')
+# length(uniq_tech)
+
+# How many platforms (experiment types) are associated with each technology?
+species_ids <- dbGetQuery(con, 'select organism, count(*) as num_plat from gpl where organism like "%homo%" group by organism order by num_plat desc')
+knitr::kable(species_ids[1:5,], format="html")
+# List view ("contains human" tech)
+num_uniq_tech_human <- dbGetQuery(con,'select technology,count(*) as num_plat from gpl where organism like "%Homo sapiens%" group by technology order by num_plat desc') 
+colnames(num_uniq_tech_human)[2] <- "Num_Platforms"
+knitr::kable(num_uniq_tech_human, format = "html")
+
+
+# Query for RNAseq data by specifiyig tags
+# Note in Journal: learned  correct syntax for combining OR & AND operators
+sql_string <- paste("SELECT DISTINCT gse.title,gse.gse, gpl.title,",
+             " gse.submission_date,",
+             " gse.supplementary_file",
+             "FROM",
+             "  gse JOIN gse_gpl ON gse_gpl.gse=gse.gse",
+             "  JOIN gpl ON gse_gpl.gpl=gpl.gpl",
+             "WHERE",
+             "  gse.submission_date > '2018-01-01' AND",
+             "  gpl.organism LIKE '%Homo sapiens%' AND",
+             "  gpl.technology LIKE '%high-throughput sequencing%' AND",
+             "  (gse.title LIKE '%stem cell%' OR",
+             "  gse.title LIKE '%muscle%' OR",
+             "  gse.title LIKE '%regeneration%' )",
+             "  ORDER BY gse.submission_date DESC",sep=" ")
+rs <- dbGetQuery(con,sql_string)
+# break the file names up and just get the actual file name
+unlist(lapply(rs$supplementary_file,
+              FUN = function(x){x <- unlist(strsplit(x,";")) ;
+              x <- x[grep(x,pattern="txt",ignore.case = TRUE)];
+                tail(unlist(strsplit(x,"/")),n=1)})) [1:10]
+# Retrieve samples with counts data
+counts_files <- as.data.frame(rs$supplementary_file[grep(rs$supplementary_file,
+                                                    pattern = "count",ignore.case = TRUE)])
+colnames(counts_files) <- "supplementary_file"
+names(rs)[1] <- "experiment"
+rs_interest <- inner_join(rs, counts_files, by = "supplementary_file")
+rs_interest[1:6,]
+
+# print(rs_interest, row.names = FALSE)
+```
+
+### Part 2: Dataset Information Report 
+
+From the aforementioned list of filtered search results, I selected a RNAseq dataset from a recent publication. See the short bio below for some basic information of dataset and its source.
+
+Now I will proceed to peruse the literature to review the completeness of the dataset. (Are experimental approaches, analysis methods, and samples annotations well documented?) 
+
+```{r First look at selected dataset, message=FALSE}
+# Review selected dataset and its meta info 
+gse_chosen <- invisible(getGEO("GSE164471", GSEMatrix = FALSE))
+gse_chosen_info <- data.frame(head(Meta(gse_chosen)))
+
+current_gpl <- names(GPLList(gse_chosen))[1]
+current_gpl_info <- Meta(getGEO(current_gpl))
+```
+#### <span style="text-decoration:underline">Platform Meta Info</span> 
+**Platform title** : `r current_gpl_info$title` \
+**Submission data** : `r current_gpl_info$submission_date` \
+**Last update data** : `r current_gpl_info$last_update_date` \ 
+**Organism** : Homo sapiens (taxid: 9606) \
+**Number of GEO datasets that use this technology** : `r length(current_gpl_info$series_id)` \
+**Number of GEO samples that use this technology** : `r length(current_gpl_info$sample_id)` 
+
+#### <span style="text-decoration:underline">Dataset Meta Info</span> 
+**Contact Location** : `r gse_chosen_info$contact_address`,`r gse_chosen_info$contact_city`,`r gse_chosen_info$contact_country` \
+**Contact Institute** : `r gse_chosen_info$contact_institute` \
+**Contact Department** : `r gse_chosen_info$contact_department` \
+**Contact Laboratory** : `r gse_chosen_info$contact_laboratory`
+ 
+There are two supplemental files in this dataset: \
+1). Genes/RNAs (ENSG) --- GSE164471_GESTALT_Muscle_ENSG_counts_annotated.csv \
+2). Transcripts/isoforms (ENST) --- GSE164471_GESTALT_Muscle_ENST_TPM_annotated.csv \
+In this study, the authors defined ENSGs as genes/RNAs and ENSTs as transcripts/isoforms.For the purpose of our analysis, we will focus on the RNA data file.
+
+#### <span style="text-decoration:underline">Personal Interest</span>
+I have a personal interest in biological aging and the development of tissue regenerative therapies. Unlike most aging-oriented studies that compare injured/diseased groups to a healthy control, this study aimed to elucidate differences in the transcriptomic network of healthy skeletal muscle as a function of age. This unique design removed the confounding variable of disease and focused on highlighting the mechanisms that drive changes in the expression of genes with aging and acquiring an understanding of both damage accumulation and strategies of biological resilience. These can serve as potential targets for clinical interventions.
+
+```{r General Info}
+# Retrieve the data 
+# (there is a 14GB raw tar file associated with this data, exclude that from download)
+if (!exists('sfiles'))
+  sfiles <- getGEOSuppFiles('GSE164471', filter_regex = "csv")
+fnames <- rownames(sfiles)
+
+# Sizable data containing 57773 protein-coding and non-coding RNAs across 53 healthy individuals (22-83 years old) 
+RNAfile <- read.csv("GSE164471/GSE164471_GESTALT_Muscle_ENSG_counts_annotated.csv", check.names = FALSE)
+
+# Notice how long each column name is. Each representing a study participant. We can see from the column names that column 2 ~ 54 represent individual study participant (the first column contains the ensemble IDs). BEWARE that the last 10 columns contain other info regarding RNAs in the Ensembl hg19 v82 (September 2015) database.
+head(RNAfile)
+colnames(RNAfile)
+
+# Number of study participants we have : (53)
+length(grep(colnames(RNAfile), pattern = "MUSCLE",ignore.case = TRUE))
+# Number of unique genes we have measurements for: (57773)
+dim(RNAfile)
+length(unique(RNAfile$Tracking_ID))
+```
+#### <span style="text-decoration:underline">Experiment Info</span> 
+* The sizable RNA data contains **57773 protein-coding and non-coding RNAs** across **53 healthy individuals (22-83 years old)** 
+  + Skeletal muscle biopsies gathered from 53 "very healthy" participants of the *GESTALT* study (Genetic and Epigenetic Signatures of Translational Aging Laboratory Testing carried out by the NIH) Criteria for sample inclusion was strict: Participants were excluded from the study if they consumed medication for chronic illness, trained professionally, had a body mass index ≥ 30 kg/m2, or were diagnosed with cognitive damage, a physical impairment, or a major disease. \
+  + The exact sample size (n) for each experimental group/condition, is given as a discrete number and unit of measurement:  **(22–52 years, n = 28; 53–83 years, n = 25)** \
+  + Measurements were taken from biologically distinct samples, while RNA detection was conducted using the *Ensembl hg19 v82 (September 2015)* database repeatedly, and an average result was taken. 
+
+### Part 3: Gene Identifier Mapping and Filter
+
+This section will generate the HGNC symbol mapping for each Ensembl ID in the data using `r package.version("biomaRt")`. \
+
+* **HGNC symbol** is associated with most human protein-coding genes according to the HUGO Gene Nomenclature Committee. 
+* **Ensembl ID** is a way for the database to label features such as genes, transcripts, exons or proteins. They aim to be unambiguous and consistent across Ensembl releases. Unlike gene names/symbols which can change as a result of improved scientific knowledge, gene IDs continue to refer to the same genomic features. *They can sometimes be outdated.* 
+* Aside from deprecated ones, it is possible for some gene IDs to lack an associated HGNC symbol. In this case: non protein-coding RNA are given names from databases like miRBase (MicroRNAs) or Rfam (info about ncRNAs families). 'Clone-based' identifiers also apply to transcripts that cannot be associated with an HGNC symbol. This information is referenced from [HGNC Guidelines](https://www.genenames.org/about/guidelines/)
+
+```{r Gene Identifier Mapping and Filter}
+if(!exists('ensembl')){
+  ensembl <- useMart(biomart = "ensembl", dataset="hsapiens_gene_ensembl")
+}
+if(!exists('geneID_map')){
+  geneID_map <- getBM(attributes = c('ensembl_gene_id', 'hgnc_symbol'),
+                                 filters = 'ensembl_gene_id',
+                                 values = RNAfile$Tracking_ID,
+                                 mart = ensembl)
+}
+
+dim(geneID_map)
+
+# Unmapped genes
+num_unmapped = nrow(RNAfile) - nrow(geneID_map)
+unmapped <- anti_join(RNAfile[1], geneID_map[1], by = c("Tracking_ID" = "ensembl_gene_id"))
+# - These unmapped identifiers will be removed from our analysis.
+RNAfiltered <- inner_join(geneID_map, RNAfile, by = c("ensembl_gene_id" = "Tracking_ID"))
+
+# Ensembl IDs that mapped to multiple HGNC symbols
+E_occur <- data.frame(table(geneID_map$ensembl_gene_id))
+# E_occur[E_occur$Freq > 1,]
+# geneID_map[geneID_map$ensembl_gene_id %in% E_occur$Var1[E_occur$Freq > 1],]
+# - One of the two HGNC symbols will be kept in this case. (the one documented in the current ensembl dataset)
+# geneID_map <- geneID_map[!(geneID_map$hgnc_symbol=="LINC00856" | geneID_map$hgnc_symbol=="STRA6LP"),]
+# - Update filtered RNA file
+RNAfiltered <- 
+  RNAfiltered[!(RNAfiltered$hgnc_symbol=="LINC00856" | RNAfiltered$hgnc_symbol=="STRA6LP"),]
+
+# HGNC symbols that mapped to multiple Ensemble IDs
+# - As the table shows, 13 HGNC symbols have mapped to 2 Ensemble IDs, respectively
+H_occur <- data.frame(table(geneID_map$hgnc_symbol))
+# H_occur[H_occur$Freq > 1,]
+# - Updated filter RNA file
+# geneID_map <- geneID_map[!(geneID_map$hgnc_symbol==""), ]
+RNAfiltered <- RNAfiltered[!(RNAfiltered$hgnc_symbol==""), ]
+# geneID_map[geneID_map$hgnc_symbol %in% H_occur$Var1[H_occur$Freq > 1],]
+# We will retain these 13 duplicated symbols for now using alternative naming.
+
+### Counts Filtering
+# Find n = 5 (GROUP 80 only contains 5 patients)
+g20 <- ncol(RNAfiltered[,grepl( "GROUP20" , names(RNAfiltered))])
+g35 <- ncol(RNAfiltered[,grepl( "GROUP35" , names(RNAfiltered))])
+g50 <- ncol(RNAfiltered[,grepl( "GROUP50" , names(RNAfiltered))])
+g65 <- ncol(RNAfiltered[,grepl( "GROUP65" , names(RNAfiltered))])
+g80 <- ncol(RNAfiltered[,grepl( "GROUP80" , names(RNAfiltered))])
+n <- min(g20, g35, g50, g65, g80)
+
+keep = rowSums(RNAfiltered[2:54] >1) >= n
+RNAfiltered = RNAfiltered[keep,]
+dim(RNAfiltered)
+# this filtering method removed roughly 3000 genes, leaving 36084 gene mappings
+rownames(RNAfiltered) <- make.names(RNAfiltered$hgnc_symbol, unique = TRUE)
+```
+
+First a gene mapping is produced using biomaRt package: `r head(geneID_map)`
+
+> Unmapped genes:
+
+* Initially, `r nrow(unmapped)` ensembl IDs were not found in the latest HUGO consortium. 
+`r head(unmapped)`\
+* I looked up several ummapped RNAs in the current Ensembl database, which confirmd that these are outdated alias of human genes. e.g. *"Ensembl gene ENSG00000005955 is no longer in the database but it has been mapped to 1 deprecated identifier."*\
+  + These unmapped identifiers are subsequently removed from this analysis.
+
+> Ensembl IDs that mapped to multiple HGNC symbols:
+
+* According to the frequency table, 2 Ensembl IDs have mapped to 2 HGNC symbols, respectively:
+`r E_occur[E_occur$Freq > 1,]`
+`r geneID_map[geneID_map$ensembl_gene_id %in% E_occur$Var1[E_occur$Freq > 1],]`\
+* Of which, **ENSG00000230417** points to a non-protein coding RNA sequence and **ENSG00000254876** refers to a 'pseudogene'. (sequence that resembles a gene but has mutated into an inactive form over the course of evolution)
+* When I looked up these two IDs on the ensemble website, their records showed one unique gene sequence. And it is linked to one HGNC symbol. This likely occurred because the fragment was documented twice in HUGO consortium. According to the [Ensembl website's FAQ section](http://uswest.ensembl.org/Help/Faq), an arbitrary HGNC synonym is selected for the summary of the gene if multiple mappings exist.
+  + In this case, one of the two HGNC symbols will be kept for each ensembl ID. (the one documented in the current ensembl dataset)
+
+> HGNC symbols that mapped to multiple Ensemble IDs:
+
+1. According to the frequency table, 13 HGNC symbols have mapped to 2 Ensemble IDs, respectively:
+`r H_occur[H_occur$Freq > 1,]` \
+  + This analysis will NOT be merging/removing the expression values of genes with the same HGNC symbol, as it is wrong to assume that different loci produce proteins with the exact same function. We will try to retain these 13 duplicated symbols in the dataset.
+ 
+2. As the table shows, there are **14640** instances where no HGNC symbols are matched with Ensemble IDs.\
+These unmatched genes IDs are likely associated with non protein-coding genes referenced in miRNA/Rfam databases or clone-base (Vega) genes. (*Search on Ensembl website is linked to miRNA/Rfam databases*) Some of these unmatched IDs can also be deprecated aliases, spliced variants, or alternative transcripts. The HGNC will not usually assign gene symbols to alternative transcripts or splice variants. 
+  + For this analysis, these unmatched rows are removed.
+
+#### Read Counts Filtering
+
+* Next, we will filter weakly expressed / non informative genes with low counts --- by checking if there are features without at least 1 read per million in n of the samples. Where **n** is size of the smallest group of biological replicates.
+* According the Methods section of the publication, read counts in the raw file were already converted to log2-transformed CPM using the edgeR package.
+  + The RNA count data for all biological samples is split into 5 testing groups, with GROUP 80 being the smallest, containing only 5 samples (**n = 5**) :\
+**GROUP20 (age 20~24)):**  `r g20` samples \
+**GROUP35 (age 35~49)):**  `r g35` samples \
+**GROUP50 (age 50~64)):**  `r g50` samples \
+**GROUP65 (age 65~79)):**  `r g65` samples \
+**GROUP80 (age 80~)):**  `r g80` samples \
+* This filtering method removed roughly 3000 genes, leaving `r nrow(RNAfiltered)` gene mappings
+* After filtering, HGNC symbol are set to be the row names of our dataset. To retain the ensembl IDs that mapped to the same symbol, alternative names is used for naming rows. 
+  + **Fully filtered RNA dataset at a glance**:
+`r head(RNAfiltered)`
+
+### Part 4: Normalization
+```{r Normalization}
+# First define the grouping of samples: 
+grouping <-data.frame(lapply(colnames(RNAfiltered)[3:55],
+                                      FUN=function(x){unlist(strsplit(x, split = "_"))[c(3,4)]}))
+colnames(grouping) <- colnames(RNAfiltered)[3:55]
+rownames(grouping) <- c("sex","age")
+grouping <- data.frame(t(grouping))
+
+filtered_RNA_matrix <- as.matrix(RNAfiltered[3:55])
+filtered_RNA_matrix[1:3,1:3]
+#rownames(filtered_RNA_matrix) <- RNAfiltered$Tracking_ID
+
+# Create the DEGList object and calculate normalization factors:
+d = DGEList(counts=filtered_RNA_matrix, group=grouping$age)
+d = calcNormFactors(d, method = "TMM") #trimmed mean method 
+
+normalized_counts <- cpm(d)
+```
+
+1. First define the grouping of samples: 
+  + **Age** and **Sex** were the only covariates used in this study. Participants were split into 5 age groups for most of the analysis according to the publication. Grouping at a glance:
+`r head(grouping)` \
+2. Then create the **DEGList object** and calculate normalization factors: \
+  + Here the *Trimmed Mean of M-values* is used for normalization, just as the authors of the dataset did. The main aim of **TMM normalization** is to account for the library size variation between samples of interest, accounting for the fact that some extremely differentially expressed genes would negatively impact the normalization procedure.
+`r d$samples[1:5,]`\
+  + Note: normalization factor < 1 means that small number of high count genes predominant in the sample. This leads to lower library size so the lower counts in said sample will have more relative value.
+`r normalized_counts[1:3, 1:2]`
+
+### Part 5: Data Dispersion
+
+#### First examine sample separation in a **MDS plot**:
+* ('Multi-dimensional scaling' arranges data such that the distances among each pair of points correlates as best as possible to the dissimilarity between their respective samples.)
+*  As the MDS shows, visualizing *overall differential expression* of > 30,000 genes in each samples across a 2D scatter plot is not really meaningful. Data points do not seem to be clustered by age at this point thus are difficult to interpret. 
+```{r Data Dispersion --- MDS plot}
+# Examine sample separation in a MDS plot:
+short <- sapply(strsplit(colnames(RNAfiltered)[2:54], split = "_"), 
+                function(x) paste(x[4], collapse = '_'))
+plotMDS(d, labels=short, cex=0.5,
+        col=c("blue", "green", "pink", "red", "black")[factor(grouping$age)])
+```
+
+#### Now examine the "dispersion" of the data:
+* '**Dispersion**' describes how much variation there is in the samples. It is a parameter of the negative binomial model commonly used to calculate differential expression. The *"common method"* calculates a dispersion value across all genes, while the *"tagwise method"* calculates gene-specific dispersions. For genes with relatively more counts, they will display smaller variations between samples than genes with fewer counts. 
+  + Square root of the common dispersion = biological coefficient of variation (**BCV**)
+
+```{r Data Dispersion --- BCV plot}
+# Estimate Dispersion --> 
+model_design <- model.matrix(~grouping$sex + grouping$age + 0)
+if(!exists('est_d')){
+  est_d <- estimateDisp(d, model_design)
+}
+# Square root of the common dispersion = biological coefficient of variation (BCV)
+bcv <- sqrt(est_d$common.dispersion)
+bcv
+# Plot the relation of genewise BCV versus gene abundance (mean log2 CPM). 
+plotBCV(est_d,col.tagwise = "black",col.common = "red",)
+```
+
+
+#### Another way of examining data dispersion is to Plot the **mean-variance relationship** of the data:
+* In this plot each dot represents the estimated mean & variance for each gene. Dots are overlaid with binned variances and the trended common dispersion. The negative binomial distribution is represented in the black line.
+```{r Data Dispersion --- MV plot}
+# Plot the mean-variance relationship of the data: 
+plotMeanVar(est_d, show.raw.vars = TRUE, show.tagwise.vars=TRUE, 
+            show.ave.raw.vars = TRUE,  
+            NBline=TRUE,
+            show.binned.common.disp.vars = TRUE)
+```
+
+#### Alternatively MA plot offers another way of highlighting differentially expressed genes
+* plotSmear() in the **edgeR** package produces a type of mean-difference plot (or MA plot) with a special representation (smearing) of log-ratios that are infinite. This plot type resolves the problem of plotting genes that have a total count of zero for one of the groups by adding the 'smear' of points at low A value.
+
+```{r r Data Dispersion --- MA plot}
+# Alternative graphic summaries of data from the edgeR package:
+plotSmear(est_d)
+```
