@@ -1,6 +1,8 @@
 # Karen_Kuang
 repository for bcb420 for Karen Kuang
 
-Assignment 1 - Dataset Selection & Preliminary Processing
+Assignment 1 - [Dataset Selection & Preliminary Processing](https://github.com/bcb420-2022/Karen_Kuang/blob/main/RNASeq-Data-Analysis-Notes.html)
 
-[view report at this link:](file:///Users/apple/bcb420_code/RNASeq-Data-Analysis-Notes.html) file:///Users/apple/bcb420_code/RNASeq-Data-Analysis-Notes.html
+Assignment 2 -
+
+Assignment 3 -
