@@ -1,0 +1,85 @@
+---
+title: "Data set Pathway and Network Analysis"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 4
+    fig_caption: yes
+author: "Karen Kuang"
+date: "`r Sys.Date()`"
+bibliography: 
+csl: biomed-central.csl
+---
+
+## Introduction ##
+
+```{r Loading libraries & datasets, echo=FALSE, message=FALSE, results='hide'}
+if (!requireNamespace("edgeR", quietly = TRUE))
+    invisible(BiocManager::install("edgeR"))
+
+if (!requireNamespace("DESeq2", quietly = TRUE))
+    invisible(BiocManager::install("DESeq2"))
+
+if (!requireNamespace("kableExtra", quietly = TRUE))
+    invisible(BiocManager::install("kableExtra"))
+
+if (!requireNamespace("circlize", quietly = TRUE))
+    invisible(BiocManager::install("circlize"))
+
+invisible(library(knitr))
+invisible(library(kableExtra))
+invisible(library(dplyr))
+invisible(library(edgeR))
+invisible(library(DESeq2))
+invisible(library(stats))
+invisible(library(circlize))
+
+#install required R and bioconductor packages
+tryCatch(expr = { library("RCurl")}, 
+         error = function(e) {  install.packages("RCurl")}, 
+         finally = library("RCurl"))
+
+tryCatch(expr = { library("BiocManager")}, 
+         error = function(e) { 
+           install.packages("BiocManager")}, 
+         finally = library("BiocManager"))
+
+tryCatch(expr = { library("ggplot2")}, 
+         error = function(e) { install.packages("ggplot2")}, 
+         finally = library("ggplot2"))
+
+#use easy cyRest library to communicate with cytoscape.
+tryCatch(expr = { library("RCy3")}, 
+         error = function(e) { BiocManager::install("RCy3")}, 
+         finally = library("RCy3"))
+```
+
+```{r, Create Enrichment Map}
+### Configurable Parameters
+
+# specify path to GSEA jar file (Java Version 11)
+gsea_jar <- params
+
+
+
+# load the latest pathway definition file
+gmt_url = "http://download.baderlab.org/EM_Genesets/current_release/Human/symbol/"
+
+# list all files on the server
+filenames = getURL(gmt_url)
+tc = textConnection(filenames)
+contents = readLines(tc)
+close(tc)
+
+# get the gmt file with all the pathway info no IEA (terms inferred from 
+# electronic annotations, start with gmt file with pathways only)
+rx = gregexpr("(?<=<a href=\")(.*.GOBP_AllPathways_no_GO_iea.*.)(.gmt)(?=\">)", contents, perl = TRUE)
+gmt_file = unlist(regmatches(contents, rx))
+
+data_dir <- getwd() # "/Users/apple/bcb420_code/Karen_Kuang"
+dest_gmt_file <- file.path(data_dir, gmt_file)
+download.file(paste(gmt_url, gmt_file, sep = ""), destfile = dest_gmt_file)
+
+```
+
+
