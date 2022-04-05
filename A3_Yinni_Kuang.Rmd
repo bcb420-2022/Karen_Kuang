@@ -7,16 +7,10 @@ output:
     fig_caption: yes
 author: "Karen Kuang"
 date: "`r Sys.Date()`"
-bibliography: 
+bibliography: A3_resources/A3.bib
 csl: biomed-central.csl
 ---
 ```{r Loading libraries & datasets, echo=FALSE, message=FALSE, results='hide'}
-if (!requireNamespace("edgeR", quietly = TRUE))
-    invisible(BiocManager::install("edgeR"))
-
-if (!requireNamespace("DESeq2", quietly = TRUE))
-    invisible(BiocManager::install("DESeq2"))
-
 if (!requireNamespace("kableExtra", quietly = TRUE))
     invisible(BiocManager::install("kableExtra"))
 
@@ -25,10 +19,6 @@ if (!requireNamespace("circlize", quietly = TRUE))
 
 invisible(library(knitr))
 invisible(library(kableExtra))
-invisible(library(dplyr))
-invisible(library(edgeR))
-invisible(library(DESeq2))
-invisible(library(stats))
 invisible(library(circlize))
 
 #install required R and bioconductor packages
