@@ -149,7 +149,7 @@ Overall, no, this is not a straight forward comparison because we are using 3608
 ### Enrichment Map Parameters, Results, and Annotations
 
 * Geneset Filtering Thresholds
-  + FDR : 0.01
+  + FDR : 0.001 (only genesets significantly enriched at a value of 0.001 or less will be displayed on the map)
   + P-Value : 1
   
 * Similarity Filtering
@@ -161,12 +161,69 @@ Overall, no, this is not a straight forward comparison because we are using 3608
   + Nodes : 248
   + Edges : 4115
 
-* Annotation: MCL Cluster Annotation Set w/ default parameters
+* Annotation: 
+  + Cluster Algorithm: Community cluster (GLay) Annotation set
+  + Label Algorithm: WordCloud-Adjacent Words (smaller clusters not defined by the algorithm were annotated by hand)
 
 ### Enrichment Map Visual Result Summary
 
 #### Layout prior to manual manipulation:
 
+```{r}
+knitr::include_graphics("./A3_resources/original_layout.png")
+```
+
+#### Theme network after manual manipulation, clustering, and annotations:
+
+```{r}
+knitr::include_graphics("./A3_resources/annotated_clusters.png")
+```
+* **Collapse your network to a theme network. What are the major themes present in this analysis? Do they fit with the model? Are there any novel pathways or themes?**
+
+The major themes observed in this network belong to processes that are up 
+regulated with age. As evident from Figure 2, main clusters representing processes in aged skeletal muscle include *APC/C(Cdc20) ubiquitin-mediated degradation*, *Mitochondrial assembly and electron transport*, as well as *Ribosomal mRNA controlled protein synthesis*. With ubiquitin-mediated degradation being the cluster with highest number of associated pathways. This theme describes the established phenomenon of reduced increased protein misfolding; reduced biosynthesis; decline in mitochondrial functions; and impaired intracellular protein degradation as an individual ages
+
+For processes in young skeletal muscle, the main cluster is *ECM Organization and Collagen Biosynthesis*. Assembly of the extracellular matrix (ECM) is a crucial step in the embryonic development phase, it directly impacts the formation of functioning collagen fibrils needed to build muscle. These processes tend to deteriorate with age. It is important to note that there are other "themed" pathway that are down regulated with age, they are either relatively undocumented (since most researchers gravitates towards study of diseases and aged individuals) or found to be insignificant by my analysis. 
+
+**Yes**, these themes do fit with the model of young vs aged skeletal muscle transcriptome profiles in healthy aging.
+
+There are novel themes but admittedly these are in nodes that do not have much connectivity or are completely removed from the “main” pathways/genesets mentioned above. Visually, they seem to be outliers, however, some indicate potentially meaningful themes that are expected in muscle aging such as *morphogenesis of branching structure* and *hallmark of epithelial mesenchymal transition*.
+
+## Part 3: Interpretation and Detailed Theme Selection
+* **Do the enrichment results support conclusions or mechanism discussed in the original paper? How do these results differ from the results you got from Assignment #2 thresholded methods**
+
+A portion of the enrichment map generated above is supported by the original publication. Authors of that study identified six significantly (p < 0.05) upregulated pathways in older (80+ years) compared to younger (20–34 years) participants: oxidative phosphorylation, adipogenesis, G2/M checkpoint, MTORC1 signaling, fatty acid metabolism, and ultraviolet response. 
+
+The enriched theme **Oxidative phosphorylation** best aligns with the author's conclusion. Additionally, **G2/M DNA damage checkpoint** is an important cell cycle checkpoint in eukaryotic organisms that ensures that cells don't initiate mitosis until damaged or incompletely replicated DNA is sufficiently repaired (Taylor and Start, 2001). And **MTORC1 signaling** controls protein synthesis by activating S6 kinase 1 (S6K1) and inhibiting 4E-binding protein 1 (4EBP1). (Ma and Blenis, 2009) Both are important regulators and drivers of protein synthesis, which fits in to the broad theme that our analysis has identified. The authors also highlighted mitochondrial function decline with age, as well as the key role of ECM proteins in muscle growth, both are reflected in our analysis. 
+
+* **Can you find evidence, i.e. publications, to support some of the results that you see. How does this evidence support your result?**
+
+Ubiquitin-mediated protein degradation was one of the largest cluster of biological processes identified by our enrichment analysis. However, this was not mentioned by authors of the original paper. In a brief literature dive, I found that muscle atrophy in adult tissue often occurs when protein degradation rates exceed protein synthesis (Bren et al, 2011). As this [2013 paper](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3775123/#:~:text=Muscle%20atrophy%20in%20adult%20tissue,the%20loss%20of%20muscle%20mass.) describes: two major protein degradation pathways, the ubiquitin-proteasome and the autophagy-lysosome systems, are activated during muscle atrophy and variably contribute to the loss of muscle mass.
+
+However, recent literature does not indicate that this pathway is restricted to the healthy aging process. "Denervation, fasting, heart failure, aging and sarcopenia are equally likely root causes of ubiquitin-mediated protein deterioration" (Geng et al., 2011). Overall, we can safely say that this theme is indeed relevant to the aging process, though it is not restricted to only that cause.
+
+### Detailed Look at Collage Formation: [Blue nodes in E.M., downregulated with age]
+```{r}
+knitr::include_graphics("./A3_resources/Collagen_formation.png")
+```
+
+* Note: The above diagram is obtained from the [REACTOME database](https://reactome.org/PathwayBrowser/#/R-HSA-1474290&PATH=R-HSA-1474244)
+
+#### Background: 
+**Collagen is the major structural protein in skeletal muscle ECM; it accounts for 1–10% of muscle mass dry weight. They are important infrastructure for not only the skeletal muscle, but a variety of different body tissues. As individuals age, their bodies starts producing less collagen. Meanwhile, rigid adipose tissues and aged collagen accumulates as regenerative ability declines. Leading to thinner, drier, and less elastic skin, and more rigin muscles, and more brittle bone structures. This process is inevitable even with regular exercise and a healthy diet.**
+
+Some of the main steps in collagen formation shown in the REACTOME diagram view can be found in our enrichment map results: 
+* **Collagen biosynthesis and modifying enzymes**
+* **Collagen chain trimerization**
+* **Collagen fibril formation/assembly**
+```{r}
+knitr::include_graphics("./A3_resources/detail_screenshot.png")
+```
+As shown below, majority gene nodes in the **Collagen Formation** pathways are colored in blue, only a few are slightly pink. This reflect the distinct separation between young and aged biological processes we see in the enrichment map above. 
+
+```{r}
+knitr::include_graphics("./A3_resources/genemania.png")
+```
 
 
 ## Assignment Journal can be found [here](https://github.com/bcb420-2022/Karen_Kuang/wiki/Assignment-3)
